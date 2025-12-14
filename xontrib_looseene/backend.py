@@ -11,6 +11,7 @@ import threading
 import heapq
 import time
 import uuid
+import hashlib
 import collections
 from collections import defaultdict, Counter
 from typing import Dict, List, Tuple, Type, Optional, Set
@@ -178,7 +179,7 @@ class IndexEngine:
         self.mem_doc_lens = {}
         self.mem_inverted = defaultdict(lambda: defaultdict(int))
         self.stats = {'total_docs': 0, 'total_len': 0, 'doc_freqs': Counter()}
-        self.deleted_ids = set()
+        self.seen_hashes = set()
         self.segments = []
         self._lock = threading.RLock()
         if self.path:
@@ -193,13 +194,13 @@ class IndexEngine:
                 d = json.load(f)
                 self.stats.update(d)
                 self.stats['doc_freqs'] = Counter(d['doc_freqs'])
-                self.deleted_ids = set(d.get('deleted_ids', []))
+                self.seen_hashes = set(d.get('seen_hashes', []))
         except:
             pass
 
     def _save_stats(self):
         with open(os.path.join(self.path, 'stats.json'), 'w') as f:
-            json.dump({**self.stats, 'deleted_ids': list(self.deleted_ids)}, f)
+            json.dump({**self.stats, 'seen_hashes': list(self.seen_hashes)}, f)
 
     def _load_segments(self):
         for name in sorted(os.listdir(self.path)):
@@ -209,11 +210,21 @@ class IndexEngine:
                 except:
                     pass
 
+    def _get_cmd_hash(self, text: str) -> str:
+        return hashlib.md5(text.strip().encode('utf-8')).hexdigest()
+
     def add(self, doc: Dict):
-        doc_id = doc['id']
+        cmd = doc.get('inp', '').strip()
+        if not cmd:
+            return
+        cmd_hash = self._get_cmd_hash(cmd)
         with self._lock:
+            if cmd_hash in self.seen_hashes:
+                return
+            self.seen_hashes.add(cmd_hash)
+            doc_id = doc['id']
             self.mem_docs[doc_id] = doc
-            tokens = TextProcessor.process(doc.get('inp', ''))
+            tokens = TextProcessor.process(cmd)
             self.mem_doc_lens[doc_id] = len(tokens)
             for t in tokens:
                 self.mem_inverted[t][doc_id] += 1
@@ -234,27 +245,36 @@ class IndexEngine:
             self._save_stats()
 
     def compact(self):
-        """Сливает все сегменты диска в один большой, чтобы ускорить работу."""
         with self._lock:
             self.flush()
             if len(self.segments) < 2:
-                return
-            print('Looseene: Starting compaction...', file=sys.stderr)
+                pass
+            print('Looseene: Starting compaction & deduplication...', file=sys.stderr)
             all_docs = {}
             all_lens = {}
             new_inverted = defaultdict(list)
+            compaction_seen_hashes = set()
+            temp_docs_list = []
             for seg in self.segments:
                 for doc_id in seg.doc_index:
-                    doc = seg.get_document(doc_id)
-                    if doc:
-                        all_docs[doc_id] = doc
-                        doc_len = seg.get_doc_len(doc_id)
-                        all_lens[doc_id] = doc_len
-                        tokens = TextProcessor.process(doc.get('inp', ''))
-                        term_counts = Counter(tokens)
-                        for term, tf in term_counts.items():
-                            new_inverted[term].append((doc_id, tf))
+                    d = seg.get_document(doc_id)
+                    if d:
+                        temp_docs_list.append((doc_id, d, seg.get_doc_len(doc_id)))
                 seg.close()
+            temp_docs_list.sort(key=lambda x: x[0], reverse=True)
+            for doc_id, doc, doc_len in temp_docs_list:
+                cmd = doc.get('inp', '').strip()
+                h = self._get_cmd_hash(cmd)
+                if h in compaction_seen_hashes:
+                    continue
+                compaction_seen_hashes.add(h)
+                all_docs[doc_id] = doc
+                all_lens[doc_id] = doc_len
+                tokens = TextProcessor.process(cmd)
+                term_counts = Counter(tokens)
+                for term, tf in term_counts.items():
+                    new_inverted[term].append((doc_id, tf))
+            self.seen_hashes = compaction_seen_hashes
             new_seg_id = f'merged_{time.time_ns()}'
             SegmentWriter.write(self.path, new_seg_id, new_inverted, all_docs, all_lens)
             for seg in self.segments:
@@ -262,7 +282,8 @@ class IndexEngine:
                     shutil.rmtree(seg.dir_path)
             self.segments = []
             self._load_segments()
-            print(f'Looseene: Compaction done. Total docs: {len(all_docs)}', file=sys.stderr)
+            self._save_stats()
+            print(f'Looseene: Compaction done. Unique docs: {len(all_docs)}', file=sys.stderr)
 
     def search(self, query: str, limit: int = 10) -> List[Dict]:
         tokens = TextProcessor.process(query)
@@ -343,5 +364,4 @@ class SearchEngineHistory(History):
         return self.engine.search(query, limit)
 
     def run_compaction(self):
-        """Ручной вызов сжатия"""
         self.engine.compact()

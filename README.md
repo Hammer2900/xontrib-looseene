@@ -1,76 +1,90 @@
 <p align="center">
-fast small embed history backend
+  <b>xontrib-looseene</b><br>
+  A lightning-fast, compressed, inverted-index history backend for <a href="https://xon.sh">xonsh shell</a>.
 </p>
 
 <p align="center">
-If you like the idea click ⭐ on the repo and <a href="https://twitter.com/intent/tweet?text=Nice%20xontrib%20for%20the%20xonsh%20shell!&url=https://github.com/Hammer2900/xontrib-looseene" target="_blank">tweet</a>.
+<a href="https://github.com/Hammer2900/xontrib-looseene/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hammer2900/xontrib-looseene" alt="License"></a>
+<a href="https://pypi.org/project/xontrib-looseene/"><img src="https://img.shields.io/pypi/v/xontrib-looseene" alt="PyPI"></a>
 </p>
 
+**Looseene** is a specialized history backend for xonsh that acts like a mini-search engine for your terminal. Unlike standard history (which scans text files), Looseene builds an inverted index using `mmap`, `zlib`, and `struct`, enabling instant search results even with massive history logs.
 
-## Installation
+### 🚀 Features
 
-To install use pip:
+*   **Full-Text Search:** Uses **BM25** ranking algorithm to find the most relevant commands, not just the most recent.
+*   **Interactive UI:** Built-in TUI (Terminal User Interface) triggered by `Ctrl+R`.
+*   **Smart Deduplication:** Automatically hashes commands (MD5) and ignores duplicates. Your history stays clean.
+*   **Compression:** Data is stored in compressed binary segments (`zlib`), saving disk space.
+*   **Safe Stemming:** Includes a lightweight English stemmer (e.g., searching for `commit` will also find `committed`).
+*   **Pure Python:** No C-extensions or heavy dependencies (like ElasticSearch). It just works.
 
+## 📦 Installation
+
+### Method 1: Standard xpip (Recommended)
+Open xonsh and run:
 ```xsh
 xpip install xontrib-looseene
-# or: xpip install -U git+https://github.com/Hammer2900/xontrib-looseene
 ```
 
-## Usage
+### Method 2: For Pipx / Unix-managed environments
+If you installed xonsh via `pipx` or your system prevents direct pip usage, use this command to inject the plugin:
 
+```bash
+# If using pipx:
+pipx inject xonsh xontrib-looseene
 
-This xontrib will get loaded automatically for interactive sessions.
-To stop this, set
+# Or using the raw subprocess method (if pipx is not available):
+xonsh -c "import sys, subprocess; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'xontrib-looseene'])"
+```
+
+## ⚙️ Configuration
+
+To activate the backend, add this line to your `.xonshrc` (usually located at `~/.xonshrc` or `~/.config/xonsh/rc.xsh`):
+
+```python
+xontrib load looseene
+```
+
+Restart your shell. You should see a message `Looseene: History backend loaded`.
+
+## ⌨️ Usage
+
+### Interactive Search
+Press **`Ctrl+R`** to open the interactive search window.
+*   **Type** to search.
+*   **Up/Down** arrows to navigate results.
+*   **Enter** to select the command and place it on your command line.
+
+### CLI Search
+You can also search from the command line without the UI:
+```xsh
+hsearch "docker run"
+# or alias:
+hs "git commit"
+```
+
+### Maintenance (Compaction)
+Looseene stores history in small "segments" on disk to ensure fast writing. Over time, these files can accumulate. To optimize performance and merge segments into one file:
 
 ```xsh
-$XONTRIBS_AUTOLOAD_DISABLED = ["looseene", ]
-# if you have set this for other xontribs, you should append the vale
+history-compact
 ```
+*Recommendation: Run this once a week or if you notice the history folder (`~/.xonsh/history_search_db`) getting crowded.*
 
+## 🛠 Technical Details
 
-## Examples
+*   **Storage:** `~/.xonsh/history_search_db/`
+*   **Index Structure:** Inverted index with delta-encoded postings lists.
+*   **Backend:** Custom implementation inheriting from `xonsh.history.base.History`.
 
-...
+## 🤝 Contributing
 
-## Known issues
+Contributions are welcome!
+1.  Fork the repo.
+2.  Install in editable mode: `xpip install -e .`
+3.  Submit a Pull Request.
 
-...
+## 📄 License
 
-## Development
-
-- activate [pre-commit](https://github.com/pre-commit/pre-commit) hooks
-```sh
-# install pre-commit plugins and activate the commit hook
-pre-commit install
-pre-commit autoupdate
-```
-
-
-## Releasing your package
-
-- Bump the version of your package.
-- Create a GitHub release (The release notes are automatically generated as a draft release after each push).
-- And publish with `poetry publish --build` or `twine`
-
-## Credits
-
-This package was created with [xontrib template](https://github.com/xonsh/xontrib-template).
-
-
---------------------
-
-## Xontrib Promotion (DO and REMOVE THIS SECTION)
-
-* Check that your repository name starts from `xontrib-` prefix. It helps Github search find it.
-
-* Add `xonsh`, `xontrib` and other thematic topics to the repository "About" setting.
-
-* Add preview image in "Settings" - "Options" - "Social preview". It allows to show preview image in Github Topics and social networks e.g. Twitter.
-
-* Enable "Sponsorship" in "Settings" - "Features" - Check "Sponsorships".
-
-* Add xontrib to the [awesome-xontribs](https://github.com/xonsh/awesome-xontribs).
-
-* Publish your xontrib to PyPi via Github Actions and users can install your xontrib via `xpip install xontrib-myxontrib`. Easiest way to achieve it is to use Github Actions. Register to https://pypi.org/ and [create API token](https://pypi.org/help/#apitoken). Go to repository "Settings" - "Secrets" and your PyPI API token as `PYPI_API_TOKEN` as a "Repository Secret". Now when you create new Release the Github Actions will publish the xontrib to PyPi automatically. Release status will be in Actions sction. See also `.github/workflows/release.yml`.
-
-* Write a message to: [xonsh Gitter chat](https://gitter.im/xonsh/xonsh?utm_source=xontrib-template&utm_medium=xontrib-template-promo&utm_campaign=xontrib-template-promo&utm_content=xontrib-template-promo), [Twitter](https://twitter.com/intent/tweet?text=xonsh%20is%20a%20Python-powered,%20cross-platform,%20Unix-gazing%20shell%20language%20and%20command%20prompt.&url=https://github.com/Hammer2900/xontrib-looseene), [Reddit](https://www.reddit.com/r/xonsh), [Mastodon](https://mastodon.online/).
+MIT License.
