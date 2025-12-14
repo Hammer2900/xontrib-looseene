@@ -1,6 +1,6 @@
 
 [project]
-name = "xontrib-looseene"
+name = "xontrib-history-looseene"
 version = "0.0.1"
 license = {file = "LICENSE"}
 description = "fast small embed history backend"
@@ -24,7 +24,7 @@ content-type = "text/markdown"
 
 
 [project.entry-points."xonsh.xontribs"]
-"looseene" = "xontrib_looseene.main"
+"history_looseene" = "xontrib_looseene.main"
 
 
 
@@ -50,11 +50,11 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 [tool.setuptools]
-    
+
 platforms = ["any"]
 include-package-data = false
 [tool.setuptools.package-data]
-    
+
 
 
 [tool.black]
