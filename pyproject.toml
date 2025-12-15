@@ -1,8 +1,8 @@
 
 [project]
 name = "xontrib-history-looseene"
-version = "0.0.1"
-license = {file = "LICENSE"}
+version = "1.0.0"
+license = {text = "MIT License"}
 description = "fast small embed history backend"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -49,10 +49,12 @@ requires = [
     "wheel",               # for bdist package distribution
 ]
 build-backend = "setuptools.build_meta"
-[tool.setuptools]
 
+[tool.setuptools]
 platforms = ["any"]
 include-package-data = false
+license-files = []
+
 [tool.setuptools.package-data]
 
 

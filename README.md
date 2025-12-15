@@ -1,11 +1,11 @@
 <p align="center">
-  <b>xontrib-looseene</b><br>
+  <b>xontrib-history-looseene</b><br>
   A lightning-fast, compressed, inverted-index history backend for <a href="https://xon.sh">xonsh shell</a>.
 </p>
 
 <p align="center">
 <a href="https://github.com/Hammer2900/xontrib-looseene/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hammer2900/xontrib-looseene" alt="License"></a>
-<a href="https://pypi.org/project/xontrib-looseene/"><img src="https://img.shields.io/pypi/v/xontrib-looseene" alt="PyPI"></a>
+<a href="https://pypi.org/project/xontrib-history-looseene/"><img src="https://img.shields.io/pypi/v/xontrib-history-looseene" alt="PyPI"></a>
 </p>
 
 **Looseene** is a specialized history backend for xonsh that acts like a mini-search engine for your terminal. Unlike standard history (which scans text files), Looseene builds an inverted index using `mmap`, `zlib`, and `struct`, enabling instant search results even with massive history logs.
@@ -32,10 +32,10 @@ If you installed xonsh via `pipx` or your system prevents direct pip usage, use 
 
 ```bash
 # If using pipx:
-pipx inject xonsh xontrib-looseene
+pipx inject xonsh xontrib-history-looseene
 
 # Or using the raw subprocess method (if pipx is not available):
-xonsh -c "import sys, subprocess; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'xontrib-looseene'])"
+xonsh -c "import sys, subprocess; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'xontrib-history-looseene'])"
 ```
 
 ## ⚙️ Configuration
@@ -43,7 +43,7 @@ xonsh -c "import sys, subprocess; subprocess.check_call([sys.executable, '-m', '
 To activate the backend, add this line to your `.xonshrc` (usually located at `~/.xonshrc` or `~/.config/xonsh/rc.xsh`):
 
 ```python
-xontrib load history_looseene
+xontrib load looseene
 ```
 
 Restart your shell. You should see a message `Looseene: History backend loaded`.
