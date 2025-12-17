@@ -1,76 +1,83 @@
 <p align="center">
   <b>xontrib-history-looseene</b><br>
-  A lightning-fast, compressed, inverted-index history backend for <a href="https://xon.sh">xonsh shell</a>.
+  A smart, lightning-fast, and feature-rich history backend for the <a href="https://xon.sh">xonsh shell</a>.
 </p>
 
 <p align="center">
-<a href="https://github.com/Hammer2900/xontrib-looseene/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hammer2900/xontrib-looseene" alt="License"></a>
-<a href="https://pypi.org/project/xontrib-history-looseene/"><img src="https://img.shields.io/pypi/v/xontrib-history-looseene" alt="PyPI"></a>
+  <a href="https://github.com/Hammer2900/xontrib-looseene/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hammer2900/xontrib-looseene" alt="License"></a>
+  <a href="https://pypi.org/project/xontrib-history-looseene/"><img src="https://img.shields.io/pypi/v/xontrib-history-looseene" alt="PyPI"></a>
 </p>
 
-**Looseene** is a specialized history backend for xonsh that acts like a mini-search engine for your terminal. Unlike standard history (which scans text files), Looseene builds an inverted index using `mmap`, `zlib`, and `struct`, enabling instant search results even with massive history logs.
+**Looseene** transforms your shell history into a mini search engine. It replaces xonsh's standard history with a compressed, inverted-index backend, enabling instant and relevant search results, even across massive command logs.
+
+![Looseene UI](assets/looseene-screenshot.png)
 
 ### 🚀 Features
 
-*   **Full-Text Search:** Uses **BM25** ranking algorithm to find the most relevant commands, not just the most recent.
-*   **Interactive UI:** Built-in TUI (Terminal User Interface) triggered by `Ctrl+R`.
-*   **Smart Deduplication:** Automatically hashes commands (MD5) and ignores duplicates. Your history stays clean.
-*   **Compression:** Data is stored in compressed binary segments (`zlib`), saving disk space.
-*   **Safe Stemming:** Includes a lightweight English stemmer (e.g., searching for `commit` will also find `committed`).
-*   **Pure Python:** No C-extensions or heavy dependencies (like ElasticSearch). It just works.
+*   **Interactive Search (`Ctrl+R`):** A powerful full-screen UI to navigate, search, and manage your history.
+*   **Command Execution Counts:** Automatically tracks how often you run each command, helping you find your most-used tools.
+*   **Custom Comments:** Annotate commands with comments for context (`F3` in UI or `hs-comment` command).
+*   **Prefix Search & Highlighting:** Find commands by typing parts of a word (e.g., `dist` finds `distribution`), with matches highlighted in yellow.
+*   **Smart & Fast:** Uses the **BM25** ranking algorithm to find the most *relevant* commands, not just the most recent. Data is stored in compressed binary segments using `mmap`, `zlib`, and `struct` for instant access.
+*   **Pure Python:** No C-extensions or heavy dependencies. It just works.
 
 ## 📦 Installation
 
-### Method 1: Standard xpip (Recommended)
 Open xonsh and run:
 ```xsh
 xpip install xontrib-history-looseene
 ```
 
-### Method 2: For Pipx / Unix-managed environments
-If you installed xonsh via `pipx` or your system prevents direct pip usage, use this command to inject the plugin:
-
-```bash
-# If using pipx:
-pipx inject xonsh xontrib-history-looseene
-
-# Or using the raw subprocess method (if pipx is not available):
-xonsh -c "import sys, subprocess; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'xontrib-history-looseene'])"
-```
-
 ## ⚙️ Configuration
 
-To activate the backend, add this line to your `.xonshrc` (usually located at `~/.xonshrc` or `~/.config/xonsh/rc.xsh`):
-
+To activate the backend, add this line to your `.xonshrc` file (e.g., `~/.config/xonsh/rc.xsh`):
 ```python
 xontrib load looseene
 ```
-
-Restart your shell. You should see a message `Looseene: History backend loaded`.
+Restart your shell. You should see a message `Looseene: History backend loaded...`.
 
 ## ⌨️ Usage
 
-### Interactive Search
-Press **`Ctrl+R`** to open the interactive search window.
-*   **Type** to search.
-*   **Up/Down** arrows to navigate results.
-*   **Enter** to select the command and place it on your command line.
+### Interactive Search (`Ctrl+R`)
+
+Press **`Ctrl+R`** to open the interactive search window. What you've already typed on the command line will be used as the initial search query.
+
+*   **Type** to search in real-time.
+*   **Up/Down Arrows** to navigate results.
+*   **Enter** to select a command and place it on your command line.
+*   **F3** to add or edit a comment for the selected command.
+*   **Ctrl+C / Esc** to exit; the text you typed in the search bar will be preserved on your command line.
+
+### Adding Comments
+
+You can annotate commands with comments for better context, either interactively or from the command line.
+
+1.  **Interactively (F3):** Press `F3` while in the `Ctrl+R` menu to open a dialog and add a comment to the selected command.
+2.  **Via CLI:** Use the `hs-comment` alias.
+
+```xsh
+# Usage: hs-comment <partial_command_to_find> "<your comment>"
+hs-comment "docker-compose up" "start project services"
+```
 
 ### CLI Search
-You can also search from the command line without the UI:
+
+You can also search directly from the command line without the UI:
 ```xsh
+# Full command
 hsearch "docker run"
-# or alias:
+
+# Alias
 hs "git commit"
 ```
 
 ### Maintenance (Compaction)
-Looseene stores history in small "segments" on disk to ensure fast writing. Over time, these files can accumulate. To optimize performance and merge segments into one file:
 
+Looseene stores history in small "segments" on disk for fast writing. Over time, these can accumulate. To merge all segments into a single, optimized file and finalize metadata (counts and comments):
 ```xsh
 history-compact
 ```
-*Recommendation: Run this once a week or if you notice the history folder (`~/.xonsh/history_search_db`) getting crowded.*
+*Recommendation: Run this command occasionally to keep performance high.*
 
 ## 🛠 Technical Details
 
@@ -86,5 +93,4 @@ Contributions are welcome!
 3.  Submit a Pull Request.
 
 ## 📄 License
-
 MIT License.
