@@ -179,7 +179,9 @@ class IndexEngine:
         self.mem_doc_lens = {}
         self.mem_inverted = defaultdict(lambda: defaultdict(int))
         self.stats = {'total_docs': 0, 'total_len': 0, 'doc_freqs': Counter()}
-        self.seen_hashes = set()
+        self.seen_metadata: Dict[str, Dict] = {}
+        self.last_added_hash = None
+        self.last_added_id = None
         self.segments = []
         self._lock = threading.RLock()
         if self.path:
@@ -194,13 +196,17 @@ class IndexEngine:
                 d = json.load(f)
                 self.stats.update(d)
                 self.stats['doc_freqs'] = Counter(d['doc_freqs'])
-                self.seen_hashes = set(d.get('seen_hashes', []))
+                raw_hashes = d.get('seen_hashes', [])
+                if isinstance(raw_hashes, list):
+                    self.seen_metadata = {h: {'cnt': 1, 'cmt': ''} for h in raw_hashes}
+                else:
+                    self.seen_metadata = raw_hashes
         except:
             pass
 
     def _save_stats(self):
         with open(os.path.join(self.path, 'stats.json'), 'w') as f:
-            json.dump({**self.stats, 'seen_hashes': list(self.seen_hashes)}, f)
+            json.dump({**self.stats, 'seen_hashes': self.seen_metadata}, f)
 
     def _load_segments(self):
         for name in sorted(os.listdir(self.path)):
@@ -219,11 +225,20 @@ class IndexEngine:
             return
         cmd_hash = self._get_cmd_hash(cmd)
         with self._lock:
-            if cmd_hash in self.seen_hashes:
+            meta = self.seen_metadata.get(cmd_hash, {'cnt': 0, 'cmt': ''})
+            current_count = meta['cnt'] + 1
+            new_comment = doc.get('cmt', meta['cmt'])
+            self.seen_metadata[cmd_hash] = {'cnt': current_count, 'cmt': new_comment}
+            if self.last_added_hash == cmd_hash and self.last_added_id in self.mem_docs:
+                self.mem_docs[self.last_added_id]['cnt'] = current_count
+                self.mem_docs[self.last_added_id]['cmt'] = new_comment
                 return
-            self.seen_hashes.add(cmd_hash)
+            doc['cnt'] = current_count
+            doc['cmt'] = new_comment
             doc_id = doc['id']
             self.mem_docs[doc_id] = doc
+            self.last_added_hash = cmd_hash
+            self.last_added_id = doc_id
             tokens = TextProcessor.process(cmd)
             self.mem_doc_lens[doc_id] = len(tokens)
             for t in tokens:
@@ -242,6 +257,8 @@ class IndexEngine:
             self.mem_docs.clear()
             self.mem_doc_lens.clear()
             self.mem_inverted.clear()
+            self.last_added_hash = None
+            self.last_added_id = None
             self._save_stats()
 
     def compact(self):
@@ -249,11 +266,11 @@ class IndexEngine:
             self.flush()
             if len(self.segments) < 2:
                 pass
-            print('Looseene: Starting compaction & deduplication...', file=sys.stderr)
+            print('Looseene: Starting smart compaction...', file=sys.stderr)
             all_docs = {}
             all_lens = {}
             new_inverted = defaultdict(list)
-            compaction_seen_hashes = set()
+            merged_map = {}
             temp_docs_list = []
             for seg in self.segments:
                 for doc_id in seg.doc_index:
@@ -261,20 +278,34 @@ class IndexEngine:
                     if d:
                         temp_docs_list.append((doc_id, d, seg.get_doc_len(doc_id)))
                 seg.close()
-            temp_docs_list.sort(key=lambda x: x[0], reverse=True)
+            temp_docs_list.sort(key=lambda x: x[0])
             for doc_id, doc, doc_len in temp_docs_list:
                 cmd = doc.get('inp', '').strip()
                 h = self._get_cmd_hash(cmd)
-                if h in compaction_seen_hashes:
-                    continue
-                compaction_seen_hashes.add(h)
+                d_cnt = doc.get('cnt', 1)
+                d_cmt = doc.get('cmt', '')
+                if h not in merged_map:
+                    merged_map[h] = {'doc_id': doc_id, 'doc': doc, 'len': doc_len, 'cnt': d_cnt, 'cmt': d_cmt}
+                else:
+                    merged_map[h]['cnt'] = max(merged_map[h]['cnt'], d_cnt)
+                    if d_cmt:
+                        merged_map[h]['cmt'] = d_cmt
+                    merged_map[h]['doc_id'] = doc_id
+                    merged_map[h]['doc'] = doc
+                    merged_map[h]['len'] = doc_len
+            self.seen_metadata = {}
+            for h, meta in merged_map.items():
+                doc_id = meta['doc_id']
+                doc = meta['doc']
+                doc['cnt'] = meta['cnt']
+                doc['cmt'] = meta['cmt']
+                self.seen_metadata[h] = {'cnt': meta['cnt'], 'cmt': meta['cmt']}
                 all_docs[doc_id] = doc
-                all_lens[doc_id] = doc_len
-                tokens = TextProcessor.process(cmd)
+                all_lens[doc_id] = meta['len']
+                tokens = TextProcessor.process(doc.get('inp', ''))
                 term_counts = Counter(tokens)
                 for term, tf in term_counts.items():
                     new_inverted[term].append((doc_id, tf))
-            self.seen_hashes = compaction_seen_hashes
             new_seg_id = f'merged_{time.time_ns()}'
             SegmentWriter.write(self.path, new_seg_id, new_inverted, all_docs, all_lens)
             for seg in self.segments:
@@ -303,16 +334,26 @@ class IndexEngine:
             for seg in self.segments:
                 for doc_id, tf in seg.get_postings(term):
                     scores[doc_id] += bm25.score(tf, seg.get_doc_len(doc_id), avg_dl, idf)
-        top_ids = heapq.nlargest(limit, scores.keys(), key=lambda k: scores[k])
+        candidate_limit = limit * 3
+        top_ids = heapq.nlargest(candidate_limit, scores.keys(), key=lambda k: scores[k])
         results = []
+        seen_hashes = set()
         for doc_id in top_ids:
+            doc = None
             if doc_id in self.mem_docs:
-                results.append(self.mem_docs[doc_id])
+                doc = self.mem_docs[doc_id]
             else:
                 for seg in reversed(self.segments):
                     doc = seg.get_document(doc_id)
                     if doc:
-                        results.append(doc)
+                        break
+            if doc:
+                cmd = doc.get('inp', '').strip()
+                h = self._get_cmd_hash(cmd)
+                if h not in seen_hashes:
+                    seen_hashes.add(h)
+                    results.append(doc)
+                    if len(results) >= limit:
                         break
         return results
 
@@ -326,7 +367,7 @@ class SearchEngineHistory(History):
         with _REGISTRY_LOCK:
             if 'xonsh_search' not in _REGISTRY:
                 _REGISTRY['xonsh_search'] = IndexEngine('xonsh_search', self.data_dir)
-        self.engine = _REGISTRY['xonsh_search']
+            self.engine = _REGISTRY['xonsh_search']
 
     def append(self, cmd):
         doc = cmd.copy()
@@ -347,7 +388,15 @@ class SearchEngineHistory(History):
                 if d:
                     all_docs.append(d)
         all_docs.sort(key=lambda x: x['id'], reverse=newest_first)
-        yield from all_docs
+        seen_hashes = set()
+        unique_docs = []
+        for doc in all_docs:
+            cmd = doc.get('inp', '').strip()
+            h = hashlib.md5(cmd.encode('utf-8')).hexdigest()
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                unique_docs.append(doc)
+        yield from unique_docs
 
     def all_items(self, newest_first=False):
         yield from self.items(newest_first)
