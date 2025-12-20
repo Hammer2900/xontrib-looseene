@@ -19,6 +19,9 @@
 *   **Custom Comments:** Annotate commands with comments for context (`F3` in UI or `hs-comment` command).
 *   **Prefix Search & Highlighting:** Find commands by typing parts of a word (e.g., `dist` finds `distribution`), with matches highlighted in yellow.
 *   **Smart & Fast:** Uses the **BM25** ranking algorithm to find the most *relevant* commands, not just the most recent. Data is stored in compressed binary segments using `mmap`, `zlib`, and `struct` for instant access.
+*   **Smart Context Search:** Commands executed in the current directory are ranked higher.
+*   **Fuzzy Search:** Tolerates typos (e.g., `gti statsu` finds `git status`).
+*   **Analytics:** Visualize your most used commands with `hs-stats`.
 *   **Pure Python:** No C-extensions or heavy dependencies. It just works.
 
 ## 📦 Installation
@@ -48,7 +51,7 @@ Press **`Ctrl+R`** to open the interactive search window. What you've already ty
 *   **F3** to add or edit a comment for the selected command.
 *   **Ctrl+C / Esc** to exit; the text you typed in the search bar will be preserved on your command line.
 
-### Adding Comments
+### Adding Comments (`hs-comment`)
 
 You can annotate commands with comments for better context, either interactively or from the command line.
 
@@ -58,6 +61,14 @@ You can annotate commands with comments for better context, either interactively
 ```xsh
 # Usage: hs-comment <partial_command_to_find> "<your comment>"
 hs-comment "docker-compose up" "start project services"
+```
+
+### Statistics (`hs-stats`)
+
+View a bar chart of your top 10 most frequently used commands:
+
+```xsh
+hs-stats
 ```
 
 ### CLI Search
