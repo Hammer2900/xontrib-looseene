@@ -1,6 +1,7 @@
 import sys
 import time
 import builtins
+from collections import Counter
 from xonsh.events import events
 from .backend import SearchEngineHistory
 from .ui import start_search_ui
@@ -54,7 +55,9 @@ def _load_xontrib_(xsh, **kwargs):
 
     def _compact(args):
         if hasattr(xsh.history, 'run_compaction'):
+            print('Compacting history segments... This may take a moment.')
             xsh.history.run_compaction()
+            print('Done.')
         else:
             print('Looseene backend not active.')
 
@@ -85,6 +88,40 @@ def _load_xontrib_(xsh, **kwargs):
             print('Looseene backend not active.')
 
     xsh.aliases['hs-comment'] = _add_comment
+
+    def _hs_stats(args):
+        """Displays a bar chart of the top used commands."""
+        hist = xsh.history
+        if not hasattr(hist, 'items'):
+            print('Looseene backend not active.')
+            return
+        print('Calculating statistics...', end='\r')
+        prog_counts = Counter()
+        try:
+            for doc in hist.items():
+                cmd = doc.get('inp', '').strip()
+                if not cmd:
+                    continue
+                prog = cmd.split()[0]
+                count = doc.get('cnt', 1)
+                prog_counts[prog] += count
+        except Exception as e:
+            print(f'Error calculating stats: {e}')
+            return
+        if not prog_counts:
+            print('History is empty.')
+            return
+        top_10 = prog_counts.most_common(10)
+        max_count = top_10[0][1]
+        print(' ' * 30)
+        print('\033[1;4m🏆 Top 10 Commands\033[0m\n')
+        for prog, count in top_10:
+            bar_len = int((count / max_count) * 30)
+            bar = '█' * bar_len
+            print(f'{prog:<12} \033[32m{bar}\033[0m \033[1m({count})\033[0m')
+        print('')
+
+    xsh.aliases['hs-stats'] = _hs_stats
     try:
         if hasattr(xsh.history, 'engine') and len(xsh.history.engine.segments) > 50:
             print("Looseene: Many history segments detected (>50). Run 'history-compact'.", file=sys.stderr)
