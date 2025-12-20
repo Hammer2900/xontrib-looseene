@@ -12,6 +12,7 @@ import heapq
 import time
 import uuid
 import hashlib
+import builtins
 from pathlib import Path
 from collections import defaultdict, Counter
 from itertools import chain
@@ -169,19 +170,16 @@ class IndexEngine:
         self.last = {'hash': None, 'id': None}
         self.segments: List[DiskSegment] = []
         self._lock = threading.RLock()
-
         if self.path.exists():
             self._load_stats()
-            # AUTO-RECOVERY: If too many segments, compact them offline to prevent FD exhaustion
             seg_paths = sorted(self.path.glob('seg_*'))
             if len(seg_paths) > 20:
-                print(f"Looseene: {len(seg_paths)} segments detected. Performing safe compaction...", file=sys.stderr)
+                print(f'Looseene: {len(seg_paths)} segments detected. Performing safe compaction...', file=sys.stderr)
                 try:
                     self._compact_offline(seg_paths)
                     seg_paths = sorted(self.path.glob('seg_*'))
                 except Exception as e:
-                    print(f"Looseene: Compaction failed ({e}). Attempting normal load.", file=sys.stderr)
-
+                    print(f'Looseene: Compaction failed ({e}). Attempting normal load.', file=sys.stderr)
             self.segments = [DiskSegment(p) for p in seg_paths]
         else:
             self.path.mkdir(parents=True, exist_ok=True)
@@ -192,7 +190,9 @@ class IndexEngine:
             self.stats.update({k: v for k, v in d.items() if k != 'doc_freqs'})
             self.stats['doc_freqs'] = Counter(d.get('doc_freqs', {}))
             hashes = d.get('seen_hashes', [])
-            self.seen_meta = {h: {'cnt': 1, 'cmt': ''} for h in hashes} if isinstance(hashes, list) else hashes
+            self.seen_meta = (
+                {h: {'cnt': 1, 'cmt': '', 'cwd': None} for h in hashes} if isinstance(hashes, list) else hashes
+            )
         except Exception:
             pass
 
@@ -205,13 +205,16 @@ class IndexEngine:
         if not cmd:
             return
         h = hashlib.md5(cmd.encode('utf-8')).hexdigest()
+        cwd = doc.get('cwd')
         with self._lock:
-            meta = self.seen_meta.setdefault(h, {'cnt': 0, 'cmt': ''})
+            meta = self.seen_meta.setdefault(h, {'cnt': 0, 'cmt': '', 'cwd': cwd})
             doc['cnt'] = doc.get('cnt', meta['cnt'] + 1)
-            doc['cmt'] = doc.get('cmt', meta['cmt'])
-            self.seen_meta[h] = {'cnt': doc['cnt'], 'cmt': doc['cmt']}
+            doc['cmt'] = doc.get('cmt', meta.get('cmt', ''))
+            self.seen_meta[h] = {'cnt': doc['cnt'], 'cmt': doc['cmt'], 'cwd': cwd if cwd else meta.get('cwd')}
             if self.last['hash'] == h and self.last['id'] in self.mem['docs']:
-                self.mem['docs'][self.last['id']].update({'cnt': doc['cnt'], 'cmt': doc['cmt']})
+                self.mem['docs'][self.last['id']].update(
+                    {'cnt': doc['cnt'], 'cmt': doc['cmt'], 'cwd': self.seen_meta[h]['cwd']}
+                )
                 return
             self.mem['docs'][doc['id']] = doc
             self.last.update({'hash': h, 'id': doc['id']})
@@ -248,18 +251,11 @@ class IndexEngine:
                         all_data.append((did, doc, s.get_doc_len(did)))
                 s.close()
             except Exception:
-                # If a segment is corrupted, we skip it to salvage the rest
                 continue
-
         if not all_data:
             return
-
         merged, new_inv, all_docs, all_lens = {}, defaultdict(list), {}, {}
-
-        # Recalculate everything based on loaded data
         self.seen_meta.clear()
-
-        # 1. Deduplicate and Merge
         for doc_id, doc, d_len in sorted(all_data, key=lambda x: x[0]):
             h = hashlib.md5(doc.get('inp', '').strip().encode('utf-8')).hexdigest()
             curr = merged.get(h, {'cnt': 0})
@@ -269,34 +265,25 @@ class IndexEngine:
                 'len': d_len,
                 'cnt': max(curr['cnt'], doc.get('cnt', 1)),
                 'cmt': doc.get('cmt') or curr.get('cmt', ''),
+                'cwd': doc.get('cwd') or curr.get('cwd', None),
             }
-
-        # 2. Update Global Stats
         self.stats['total_docs'] = len(merged)
         self.stats['total_len'] = sum(m['len'] for m in merged.values())
         self.stats['doc_freqs'] = Counter()
-
-        # 3. Rebuild Index
         for h, m in merged.items():
-            m['doc'].update({'cnt': m['cnt'], 'cmt': m['cmt']})
-            self.seen_meta[h] = {'cnt': m['cnt'], 'cmt': m['cmt']}
+            m['doc'].update({'cnt': m['cnt'], 'cmt': m['cmt'], 'cwd': m['cwd']})
+            self.seen_meta[h] = {'cnt': m['cnt'], 'cmt': m['cmt'], 'cwd': m['cwd']}
             all_docs[m['id']] = m['doc']
             all_lens[m['id']] = m['len']
-
             for t, tf in Counter(TextProcessor.process(m['doc'].get('inp', ''))).items():
                 new_inv[t].append((m['id'], tf))
                 self.stats['doc_freqs'][t] += 1
-
-        # 4. Write New Segment
         new_seg_path = SegmentWriter.write(self.path, f'merged_{time.time_ns()}', new_inv, all_docs, all_lens)
-
-        # 5. Cleanup Old Segments
         for p in seg_paths:
             try:
                 shutil.rmtree(p)
             except OSError:
                 pass
-
         self._save_stats()
 
     def compact(self):
@@ -323,14 +310,15 @@ class IndexEngine:
                     'len': d_len,
                     'cnt': max(curr['cnt'], doc.get('cnt', 1)),
                     'cmt': doc.get('cmt') or curr.get('cmt', ''),
+                    'cwd': doc.get('cwd') or curr.get('cwd', None),
                 }
             self.seen_meta.clear()
             self.stats['total_docs'] = len(merged)
             self.stats['total_len'] = sum(m['len'] for m in merged.values())
             self.stats['doc_freqs'] = Counter()
             for h, m in merged.items():
-                m['doc'].update({'cnt': m['cnt'], 'cmt': m['cmt']})
-                self.seen_meta[h] = {'cnt': m['cnt'], 'cmt': m['cmt']}
+                m['doc'].update({'cnt': m['cnt'], 'cmt': m['cmt'], 'cwd': m['cwd']})
+                self.seen_meta[h] = {'cnt': m['cnt'], 'cmt': m['cmt'], 'cwd': m['cwd']}
                 all_docs[m['id']] = m['doc']
                 all_lens[m['id']] = m['len']
                 for t, tf in Counter(TextProcessor.process(m['doc'].get('inp', ''))).items():
@@ -342,8 +330,8 @@ class IndexEngine:
             self.segments = [DiskSegment(new_seg_path)]
             self._save_stats()
 
-    def search(self, query: str, limit: int = 10) -> List[Dict]:
-        """BM25 Search."""
+    def search(self, query: str, limit: int = 10, cwd: str = None) -> List[Dict]:
+        """BM25 Search with Directory Awareness."""
         tokens = TextProcessor.process(query)
         if not tokens:
             return []
@@ -359,16 +347,18 @@ class IndexEngine:
                 if t not in self.stats['doc_freqs']:
                     continue
                 idf = math.log(
-                    1 + (self.stats['total_docs'] - self.stats['doc_freqs'][t] + 0.5) / (
-                            self.stats['doc_freqs'][t] + 0.5)
+                    1
+                    + (self.stats['total_docs'] - self.stats['doc_freqs'][t] + 0.5) / (self.stats['doc_freqs'][t] + 0.5)
                 )
                 for did, tf in self.mem['inv'][t].items():
                     scores[did] += bm25.score(tf, self.mem['lens'][did], avg_dl, idf)
                 for s in self.segments:
                     for did, tf in s.get_postings(t):
                         scores[did] += bm25.score(tf, s.get_doc_len(did), avg_dl, idf)
-        results, seen = [], set()
-        for did in heapq.nlargest(limit * 3, scores, key=scores.get):
+        top_candidates = heapq.nlargest(limit * 5, scores, key=scores.get)
+        refined_results = []
+        seen = set()
+        for did in top_candidates:
             doc = self.mem['docs'].get(did) or next(
                 (d for s in reversed(self.segments) if (d := s.get_document(did))), None
             )
@@ -378,10 +368,12 @@ class IndexEngine:
                     if meta := self.seen_meta.get(h):
                         doc.update(meta)
                     seen.add(h)
-                    results.append(doc)
-                if len(results) >= limit:
-                    break
-        return results
+                    score = scores[did]
+                    if cwd and doc.get('cwd') == cwd:
+                        score *= 2.0
+                    refined_results.append((score, doc))
+        refined_results.sort(key=lambda x: x[0], reverse=True)
+        return [r[1] for r in refined_results[:limit]]
 
 
 class SearchEngineHistory(History):
@@ -393,7 +385,21 @@ class SearchEngineHistory(History):
             self.engine = _REGISTRY.setdefault('xonsh_search', IndexEngine('xonsh_search', str(path)))
 
     def append(self, cmd: Dict):
-        self.engine.add({**cmd, 'id': time.time_ns(), 'sessionid': self.sessionid, 'out': None})
+        inp = cmd.get('inp', '').strip()
+        xsh = getattr(builtins, '__xonsh__', None)
+        if xsh and xsh.env:
+            ignore_regex = xsh.env.get('XONSH_HISTORY_IGNORE_REGEX')
+            if ignore_regex:
+                try:
+                    if re.match(ignore_regex, inp):
+                        return
+                except re.error:
+                    pass
+        try:
+            current_cwd = os.getcwd()
+        except OSError:
+            current_cwd = None
+        self.engine.add({**cmd, 'id': time.time_ns(), 'sessionid': self.sessionid, 'out': None, 'cwd': current_cwd})
         try:
             self.engine.flush()
         except Exception as e:
@@ -427,7 +433,11 @@ class SearchEngineHistory(History):
         }
 
     def search(self, query, limit=10):
-        return self.engine.search(query, limit)
+        try:
+            cwd = os.getcwd()
+        except OSError:
+            cwd = None
+        return self.engine.search(query, limit, cwd=cwd)
 
     def run_compaction(self):
         self.engine.compact()

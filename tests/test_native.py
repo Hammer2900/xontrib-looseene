@@ -477,6 +477,61 @@ class TestEdgeCases(unittest.TestCase):
         for seg in recovery_engine.segments:
             seg.close()
 
+    def test_cwd_storage(self):
+        """Проверка, что CWD сохраняется в метаданных."""
+        doc = self._create_doc('make build')
+        doc['cwd'] = '/home/user/project_a'
+        self.engine.add(doc)
+
+        # Проверяем, что в seen_meta записался путь
+        import hashlib
+        h = hashlib.md5(doc['inp'].encode('utf-8')).hexdigest()
+        self.assertEqual(self.engine.seen_meta[h]['cwd'], '/home/user/project_a')
+
+    def test_context_boosting(self):
+        """Проверка, что команды из текущей папки ранжируются выше."""
+        # Создаем две похожие команды в разных папках
+        # Команда 1: в папке backend
+        doc1 = self._create_doc('npm run dev')
+        doc1['cwd'] = '/projects/backend'
+
+        # Команда 2: в папке frontend
+        doc2 = self._create_doc('npm run build')
+        doc2['cwd'] = '/projects/frontend'
+
+        self.engine.add(doc1)
+        self.engine.add(doc2)
+
+        # Сценарий 1: Мы находимся в папке backend.
+        # Ожидаем, что 'npm run dev' будет первой, несмотря на то, что BM25 у них почти одинаковый.
+        results_back = self.engine.search('npm', cwd='/projects/backend')
+        self.assertEqual(results_back[0]['inp'], 'npm run dev')
+
+        # Сценарий 2: Мы находимся в папке frontend.
+        # Ожидаем 'npm run build' первой.
+        results_front = self.engine.search('npm', cwd='/projects/frontend')
+        self.assertEqual(results_front[0]['inp'], 'npm run build')
+
+    def test_cwd_preservation_after_compact(self):
+        """Проверка, что CWD не теряется после компакции сегментов."""
+        doc = self._create_doc('cargo test')
+        doc['cwd'] = '/rust/app'
+
+        self.engine.add(doc)
+        self.engine.flush()  # Записываем на диск
+
+        self.engine.compact()  # Сливаем сегменты
+
+        # Перезагружаем движок (симуляция перезапуска шелла)
+        for s in self.engine.segments: s.close()
+        new_engine = IndexEngine('test_cwd_compact', self.test_dir)
+
+        results = new_engine.search('cargo')
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['cwd'], '/rust/app')
+
+        for s in new_engine.segments: s.close()
+
 
 if __name__ == '__main__':
     unittest.main()
