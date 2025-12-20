@@ -169,9 +169,20 @@ class IndexEngine:
         self.last = {'hash': None, 'id': None}
         self.segments: List[DiskSegment] = []
         self._lock = threading.RLock()
+
         if self.path.exists():
             self._load_stats()
-            self.segments = [DiskSegment(p) for p in sorted(self.path.glob('seg_*'))]
+            # AUTO-RECOVERY: If too many segments, compact them offline to prevent FD exhaustion
+            seg_paths = sorted(self.path.glob('seg_*'))
+            if len(seg_paths) > 20:
+                print(f"Looseene: {len(seg_paths)} segments detected. Performing safe compaction...", file=sys.stderr)
+                try:
+                    self._compact_offline(seg_paths)
+                    seg_paths = sorted(self.path.glob('seg_*'))
+                except Exception as e:
+                    print(f"Looseene: Compaction failed ({e}). Attempting normal load.", file=sys.stderr)
+
+            self.segments = [DiskSegment(p) for p in seg_paths]
         else:
             self.path.mkdir(parents=True, exist_ok=True)
 
@@ -224,6 +235,69 @@ class IndexEngine:
                 self.mem[k].clear()
             self.last.update({'hash': None, 'id': None})
             self._save_stats()
+
+    def _compact_offline(self, seg_paths: List[Path]):
+        """Merges segments one-by-one to avoid opening too many files."""
+        all_data = []
+        for p in seg_paths:
+            try:
+                s = DiskSegment(p)
+                for did in s.doc_index:
+                    doc = s.get_document(did)
+                    if doc:
+                        all_data.append((did, doc, s.get_doc_len(did)))
+                s.close()
+            except Exception:
+                # If a segment is corrupted, we skip it to salvage the rest
+                continue
+
+        if not all_data:
+            return
+
+        merged, new_inv, all_docs, all_lens = {}, defaultdict(list), {}, {}
+
+        # Recalculate everything based on loaded data
+        self.seen_meta.clear()
+
+        # 1. Deduplicate and Merge
+        for doc_id, doc, d_len in sorted(all_data, key=lambda x: x[0]):
+            h = hashlib.md5(doc.get('inp', '').strip().encode('utf-8')).hexdigest()
+            curr = merged.get(h, {'cnt': 0})
+            merged[h] = {
+                'id': doc_id,
+                'doc': doc,
+                'len': d_len,
+                'cnt': max(curr['cnt'], doc.get('cnt', 1)),
+                'cmt': doc.get('cmt') or curr.get('cmt', ''),
+            }
+
+        # 2. Update Global Stats
+        self.stats['total_docs'] = len(merged)
+        self.stats['total_len'] = sum(m['len'] for m in merged.values())
+        self.stats['doc_freqs'] = Counter()
+
+        # 3. Rebuild Index
+        for h, m in merged.items():
+            m['doc'].update({'cnt': m['cnt'], 'cmt': m['cmt']})
+            self.seen_meta[h] = {'cnt': m['cnt'], 'cmt': m['cmt']}
+            all_docs[m['id']] = m['doc']
+            all_lens[m['id']] = m['len']
+
+            for t, tf in Counter(TextProcessor.process(m['doc'].get('inp', ''))).items():
+                new_inv[t].append((m['id'], tf))
+                self.stats['doc_freqs'][t] += 1
+
+        # 4. Write New Segment
+        new_seg_path = SegmentWriter.write(self.path, f'merged_{time.time_ns()}', new_inv, all_docs, all_lens)
+
+        # 5. Cleanup Old Segments
+        for p in seg_paths:
+            try:
+                shutil.rmtree(p)
+            except OSError:
+                pass
+
+        self._save_stats()
 
     def compact(self):
         """Merges segments, deduplicates, and cleans up resources."""
@@ -285,8 +359,8 @@ class IndexEngine:
                 if t not in self.stats['doc_freqs']:
                     continue
                 idf = math.log(
-                    1
-                    + (self.stats['total_docs'] - self.stats['doc_freqs'][t] + 0.5) / (self.stats['doc_freqs'][t] + 0.5)
+                    1 + (self.stats['total_docs'] - self.stats['doc_freqs'][t] + 0.5) / (
+                            self.stats['doc_freqs'][t] + 0.5)
                 )
                 for did, tf in self.mem['inv'][t].items():
                     scores[did] += bm25.score(tf, self.mem['lens'][did], avg_dl, idf)
@@ -305,8 +379,8 @@ class IndexEngine:
                         doc.update(meta)
                     seen.add(h)
                     results.append(doc)
-                    if len(results) >= limit:
-                        break
+                if len(results) >= limit:
+                    break
         return results
 
 

@@ -148,9 +148,9 @@ async def start_search_ui(event, initial_text=''):
                 current_doc['cmt'] = new_comment
                 query = search_buffer.text
                 if query:
-                    state['docs'] = history.search(query, limit=20)
+                    state['docs'] = history.search(query, limit=100)
 
-    results_window = Window(content=result_control, height=Dimension(min=10, max=10), wrap_lines=False)
+    results_window = Window(content=result_control, height=Dimension(min=10), wrap_lines=False)
     search_window = Window(BufferControl(buffer=search_buffer), height=1)
     label_window = Window(
         content=FormattedTextControl(text=[('ansiblue bold', 'Search: ')]), height=1, dont_extend_width=True

@@ -431,6 +431,52 @@ class TestEdgeCases(unittest.TestCase):
         self.engine.compact()
         self.assertEqual(len(self.engine.segments), 1)
 
+    def test_auto_recovery_from_many_segments(self):
+        """
+        Тест автоматической безопасной компакции при запуске,
+        если обнаружено слишком много сегментов (защита от OSError: Too many open files).
+        """
+        # 1. Создаем > 20 сегментов (пороговое значение в коде = 20)
+        num_segments = 25
+        for i in range(num_segments):
+            self.engine.add(self._create_doc(f'unique_cmd_{i}'))
+            self.engine.flush()
+
+        # Проверяем, что файлы действительно создались на диске
+        seg_paths = list(Path(self.test_dir).glob('seg_*'))
+        self.assertEqual(len(seg_paths), num_segments)
+
+        # Закрываем текущий движок, чтобы освободить ресурсы перед тестом восстановления
+        for seg in self.engine.segments:
+            seg.close()
+
+        # 2. Инициализируем новый движок в той же директории.
+        # В этот момент должна сработать логика _compact_offline,
+        # так как сегментов 25 > 20.
+        recovery_engine = IndexEngine('test_recovery', self.test_dir)
+
+        # 3. Проверяем, что компакция произошла
+        # Должен остаться только 1 объединенный сегмент
+        self.assertEqual(len(recovery_engine.segments), 1)
+
+        # Проверяем статистику
+        self.assertEqual(recovery_engine.stats['total_docs'], num_segments)
+
+        # 4. Проверяем целостность данных
+        # Ищем первую команду
+        res_first = recovery_engine.search('unique_cmd_0')
+        self.assertEqual(len(res_first), 1)
+        self.assertEqual(res_first[0]['inp'], 'unique_cmd_0')
+
+        # Ищем последнюю команду
+        res_last = recovery_engine.search(f'unique_cmd_{num_segments - 1}')
+        self.assertEqual(len(res_last), 1)
+        self.assertEqual(res_last[0]['inp'], f'unique_cmd_{num_segments - 1}')
+
+        # Чистка
+        for seg in recovery_engine.segments:
+            seg.close()
+
 
 if __name__ == '__main__':
     unittest.main()
