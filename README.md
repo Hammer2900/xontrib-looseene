@@ -85,12 +85,31 @@ history-compact
 *   **Index Structure:** Inverted index with delta-encoded postings lists.
 *   **Backend:** Custom implementation inheriting from `xonsh.history.base.History`.
 
+## 🛠 Development & Testing
+
+Looseene is designed to be lightweight and dependency-free. You can verify the core search engine logic using only the Python standard library.
+
+### Running Core Tests (Zero Dependencies)
+No need to install `pytest`. Simply run the test script directly with Python:
+
+```bash
+python3 tests/test_native.py
+```
+
+### Running Integration Tests
+If you have `pytest` and `xonsh` installed and want to run the full suite (including xontrib loading tests):
+
+```bash
+pytest
+```
+
 ## 🤝 Contributing
 
 Contributions are welcome!
-1.  Fork the repo.
-2.  Install in editable mode: `xpip install -e .`
-3.  Submit a Pull Request.
+1. Fork the repo.
+2. Install in editable mode: `xpip install -e .`
+3. **Ensure tests pass**: `python3 tests/test_native.py`
+4. Submit a Pull Request.
 
 ## 📄 License
 MIT License.
