@@ -13,6 +13,7 @@ import time
 import uuid
 import hashlib
 import builtins
+import difflib
 from pathlib import Path
 from collections import defaultdict, Counter
 from itertools import chain
@@ -330,8 +331,31 @@ class IndexEngine:
             self.segments = [DiskSegment(new_seg_path)]
             self._save_stats()
 
+    def _collect_recent_commands(self, limit: int = 3000) -> Dict[str, Dict]:
+        """Collects unique commands from memory and recent segments for fuzzy search."""
+        candidates = {}
+        count = 0
+        for doc in reversed(list(self.mem['docs'].values())):
+            cmd = doc.get('inp', '').strip()
+            if cmd and cmd not in candidates:
+                candidates[cmd] = doc
+                count += 1
+                if count >= limit:
+                    return candidates
+        for s in reversed(self.segments):
+            for did in sorted(s.doc_index.keys(), reverse=True):
+                doc = s.get_document(did)
+                if doc:
+                    cmd = doc.get('inp', '').strip()
+                    if cmd and cmd not in candidates:
+                        candidates[cmd] = doc
+                        count += 1
+                        if count >= limit:
+                            return candidates
+        return candidates
+
     def search(self, query: str, limit: int = 10, cwd: str = None) -> List[Dict]:
-        """BM25 Search with Directory Awareness."""
+        """BM25 Search with Fuzzy Fallback."""
         tokens = TextProcessor.process(query)
         if not tokens:
             return []
@@ -373,7 +397,17 @@ class IndexEngine:
                         score *= 2.0
                     refined_results.append((score, doc))
         refined_results.sort(key=lambda x: x[0], reverse=True)
-        return [r[1] for r in refined_results[:limit]]
+        results = [r[1] for r in refined_results[:limit]]
+        if not results:
+            candidates_map = self._collect_recent_commands(limit=3000)
+            matches = difflib.get_close_matches(query, candidates_map.keys(), n=limit, cutoff=0.6)
+            for m in matches:
+                doc = candidates_map[m]
+                h = hashlib.md5(doc.get('inp', '').strip().encode('utf-8')).hexdigest()
+                if meta := self.seen_meta.get(h):
+                    doc.update(meta)
+                results.append(doc)
+        return results
 
 
 class SearchEngineHistory(History):

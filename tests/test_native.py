@@ -532,6 +532,25 @@ class TestEdgeCases(unittest.TestCase):
 
         for s in new_engine.segments: s.close()
 
+    def test_fuzzy_search_fallback(self):
+        """Проверка работы нечеткого поиска при опечатках."""
+        self.engine.add(self._create_doc('git status'))
+        self.engine.add(self._create_doc('docker run'))
+
+        # 1. Прямой поиск должен работать как обычно
+        res_exact = self.engine.search('git status')
+        self.assertEqual(len(res_exact), 1)
+        self.assertEqual(res_exact[0]['inp'], 'git status')
+
+        # 2. Поиск с опечаткой (gti statsu) - BM25 вернет 0, сработает Fuzzy
+        res_typo = self.engine.search('gti statsu')
+        self.assertGreater(len(res_typo), 0)
+        self.assertEqual(res_typo[0]['inp'], 'git status')
+
+        # 3. Совсем бред не должен ничего возвращать
+        res_nonsense = self.engine.search('xyz abc 12345')
+        self.assertEqual(len(res_nonsense), 0)
+
 
 if __name__ == '__main__':
     unittest.main()
